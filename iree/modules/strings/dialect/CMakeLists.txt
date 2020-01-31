@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_subdirectory(test)
-
 iree_cc_library(
   NAME
     dialect
@@ -83,3 +81,4 @@ iree_cc_binary(
     iree::tools::iree_translate_library
 )
 add_executable(strings-translate ALIAS iree_modules_strings_dialect_strings-translate)
+

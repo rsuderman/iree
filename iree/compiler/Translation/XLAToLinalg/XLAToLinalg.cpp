@@ -11,6 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+#include "iree/compiler/Translation/XLAToLinalg/XLAToLinalg.h"
+
+#include <memory>
 
 #include "iree/compiler/Translation/XLAToLinalg/MapHloToScalarOp.h"
 #include "llvm/Support/CommandLine.h"
@@ -52,10 +55,9 @@ class PointwiseConverter : public OpConversionPattern<HloOp> {
     auto loc = hloOp.getLoc();
     // Unary operation doesn't have getOperand(i) method, so use getOperation()
     // first and then invoke the method.
-    ShapedType argType = hloOp.getOperation()
-                             ->getOperand(0)
-                             .getType()
-                             .template dyn_cast<ShapedType>();
+    auto operation = hloOp.getOperation();
+    ShapedType argType =
+        operation->getOperand(0).getType().template dyn_cast<ShapedType>();
     if (!argType || !argType.getElementType().isIntOrFloat()) {
       return ConversionPattern::matchFailure();
     }
@@ -68,8 +70,11 @@ class PointwiseConverter : public OpConversionPattern<HloOp> {
                       [&](Value arg) { return arg.getType() == newArgType; })) {
       return ConversionPattern::matchFailure();
     }
+
+    const int indexingMapsSize =
+        operation->getNumOperands() + operation->getNumResults();
     SmallVector<Attribute, 2> indexingMaps(
-        args.size(),
+        indexingMapsSize,
         AffineMapAttr::get(rewriter.getMultiDimIdentityMap(numLoops)));
 
     SmallVector<Type, 1> resultTypes = {hloOp.getResult().getType()};
@@ -108,7 +113,7 @@ void populateXlaToLinalgConversionPattern(MLIRContext* context,
   patterns->insert<
       PointwiseConverter<xla_hlo::AddOp>, PointwiseConverter<xla_hlo::DivOp>,
       PointwiseConverter<xla_hlo::ExpOp>, PointwiseConverter<xla_hlo::MulOp>,
-      PointwiseConverter<xla_hlo::SubOp> >(context);
+      PointwiseConverter<xla_hlo::SubOp>>(context);
 }
 
 struct XlaLegalizeToLinalg : public FunctionPass<XlaLegalizeToLinalg> {
@@ -126,6 +131,10 @@ struct XlaLegalizeToLinalg : public FunctionPass<XlaLegalizeToLinalg> {
 };
 
 }  // namespace
+
+std::unique_ptr<OpPassBase<FuncOp>> createXLAToLinalgPass() {
+  return std::make_unique<XlaLegalizeToLinalg>();
+}
 
 static PassRegistration<XlaLegalizeToLinalg> legalize_pass(
     "iree-hlo-to-linalg", "Legalize from HLO dialect to Linalg dialect");
