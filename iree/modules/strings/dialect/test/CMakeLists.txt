@@ -21,4 +21,5 @@ iree_lit_test_suite(
   DATA
     iree::modules::strings::dialect::strings-opt
     iree::tools::IreeFileCheck
+    iree::tools::iree-opt
 )

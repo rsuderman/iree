@@ -98,8 +98,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 if(${IREE_BUILD_COMPILER})
   # Compiler dependencies require Python.
   # Find version 3+ first, so CMake doesn't find a lower version like 2.7 first.
-  find_package(PythonInterp 3 REQUIRED)
-  find_package(PythonLibs 3 REQUIRED)
+  find_package(Python3 REQUIRED)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH
@@ -160,7 +159,8 @@ add_subdirectory(build_tools/embed_data/)
 
 add_subdirectory(iree/base)
 add_subdirectory(iree/hal)
-add_subdirectory(iree/modules)
+# Hal module is special and must be built before the compiler.
+add_subdirectory(iree/modules/hal)
 add_subdirectory(iree/schemas)
 add_subdirectory(iree/testing)
 
@@ -183,6 +183,10 @@ if(${IREE_BUILD_PYTHON_BINDINGS})
 endif()
 
 add_subdirectory(iree/tools)
+
+if(${IREE_BUILD_COMPILER})
+  add_subdirectory(iree/modules)
+endif()
 
 if(${IREE_BUILD_SAMPLES})
   add_subdirectory(iree/samples)

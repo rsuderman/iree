@@ -11,15 +11,49 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-# TODO(suderman): fix cmake build
 # bazel_to_cmake: DO NOT EDIT
 
-add_subdirectory(dialect)
+if(${IREE_BUILD_COMPILER})
+  add_subdirectory(dialect)
+
+  iree_bytecode_module(
+    NAME
+      strings_module_test
+    SRC
+      "strings_module_test.mlir"
+    CC_NAMESPACE
+      "iree::strings_module_test"
+    TRANSLATE_TOOL
+      iree_modules_strings_dialect_strings-translate
+    TRANSLATION
+      "-iree-mlir-to-vm-bytecode-module"
+    PUBLIC
+  )
+
+  iree_cc_test(
+    NAME
+      strings_module_test
+    SRCS
+      "strings_module_test.cc"
+    DEPS
+      iree::modules::strings::strings_module_test_cc
+      iree::modules::strings::strings_module
+      iree::base::api
+      iree::base::logging
+      iree::hal::api
+      iree::modules::hal
+      iree::testing::gtest_main
+      iree::vm
+      iree::vm::bytecode_module
+      iree::vm::ref
+      absl::core_headers
+      absl::strings
+  )
+endif()
 
 iree_cc_library(
   NAME
-    strings
+    strings_module
   HDRS
     "strings_module.h"
   SRCS

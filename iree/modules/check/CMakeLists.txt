@@ -12,41 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_subdirectory(dialect)
+if(${IREE_BUILD_COMPILER})
+  add_subdirectory(dialect)
 
-iree_bytecode_module(
-  NAME
-    check_test_module
-  SRC
-    "check_test.mlir"
-  CC_NAMESPACE
-    "iree::check"
-  TRANSLATE_TOOL
-    iree_modules_check_dialect_check-translate
-  TRANSLATION
-    "-iree-mlir-to-vm-bytecode-module"
-  PUBLIC
-)
+  iree_bytecode_module(
+    NAME
+      check_test_module
+    SRC
+      "check_test.mlir"
+    CC_NAMESPACE
+      "iree::check"
+    TRANSLATE_TOOL
+      iree_modules_check_dialect_check-translate
+    TRANSLATION
+      "-iree-mlir-to-vm-bytecode-module"
+    PUBLIC
+  )
 
-iree_cc_test(
-  NAME
-    check_test
-  SRCS
-    "check_test.cc"
-  DEPS
-    iree::modules::check::check_test_module_cc
-    iree::modules::check::native_module
-    iree::base::api
-    iree::base::logging
-    iree::hal::api
-    iree::modules::hal
-    iree::testing::gtest_main
-    iree::vm
-    iree::vm::bytecode_module
-    iree::vm::ref
-    absl::core_headers
-    absl::strings
-)
+  iree_cc_test(
+    NAME
+      check_test
+    SRCS
+      "check_test.cc"
+    DEPS
+      iree::modules::check::check_test_module_cc
+      iree::modules::check::native_module
+      iree::base::api
+      iree::base::logging
+      iree::hal::api
+      iree::modules::hal
+      iree::testing::gtest_main
+      iree::vm
+      iree::vm::bytecode_module
+      iree::vm::ref
+      absl::core_headers
+      absl::strings
+  )
+endif()
 
 iree_cc_library(
   NAME
@@ -66,3 +68,4 @@ iree_cc_library(
     absl::strings
   PUBLIC
 )
+

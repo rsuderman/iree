@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+add_subdirectory(test)
+
 iree_cc_library(
   NAME
     dialect
@@ -33,7 +35,6 @@ iree_cc_library(
     iree::compiler::Dialect::VM::Conversion
     iree::modules::strings::dialect::strings_imports
   ALWAYSLINK
-  PUBLIC
 )
 
 iree_tablegen_library(
@@ -60,3 +61,25 @@ iree_cc_embed_data(
   FLATTEN
 )
 
+iree_cc_binary(
+  NAME
+    strings-opt
+  OUT
+    strings-opt
+  DEPS
+    iree::modules::strings::dialect
+    iree::tools::iree_opt_library
+    MLIROptMain
+)
+add_executable(strings-opt ALIAS iree_modules_strings_dialect_strings-opt)
+
+iree_cc_binary(
+  NAME
+    strings-translate
+  OUT
+    strings-translate
+  DEPS
+    iree::modules::strings::dialect
+    iree::tools::iree_translate_library
+)
+add_executable(strings-translate ALIAS iree_modules_strings_dialect_strings-translate)

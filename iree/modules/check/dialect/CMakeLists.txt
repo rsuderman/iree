@@ -31,7 +31,6 @@ iree_cc_library(
     iree::modules::check::dialect::check_imports
     iree::modules::check::dialect::check_ops_gen
     iree::compiler::Dialect::VM::Conversion
-    iree::samples::custom_modules::dialect::custom_imports
     LLVMSupport
     MLIRIR
     MLIRParser
@@ -69,16 +68,22 @@ iree_cc_embed_data(
 iree_cc_binary(
   NAME
     check-opt
+  OUT
+    check-opt
   DEPS
     iree::modules::check::dialect
     iree::tools::iree_opt_library
     MLIROptMain
 )
+add_executable(check-opt ALIAS iree_modules_check_dialect_check-opt)
 
 iree_cc_binary(
   NAME
+    check-translate
+  OUT
     check-translate
   DEPS
     iree::modules::check::dialect
     iree::tools::iree_translate_library
 )
+add_executable(check-translate ALIAS iree_modules_check_dialect_check-translate)
