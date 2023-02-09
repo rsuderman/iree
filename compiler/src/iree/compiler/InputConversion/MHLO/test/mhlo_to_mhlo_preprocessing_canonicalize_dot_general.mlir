@@ -65,7 +65,7 @@ func.func @dot_general_to_dot_general_rank_reduced_attribute(%arg0: tensor<1x8x3
 
 // -----
 
-func.func @dot_general_to_dot_general_rank_reduced_a_transposed(%arg0: tensor<1x8x64x32xf32>, %arg1: tensor<1x8x64x32xf32>) -> tensor<1x8x32x32xf32> {
+func.func @changing_to_validate_stuff(%arg0: tensor<1x8x64x32xf32>, %arg1: tensor<1x8x64x32xf32>) -> tensor<1x8x32x32xf32> {
   %0 = "mhlo.dot_general"(%arg0, %arg1) {
     dot_dimension_numbers = #mhlo.dot<
       lhs_batching_dimensions = [0, 1],
