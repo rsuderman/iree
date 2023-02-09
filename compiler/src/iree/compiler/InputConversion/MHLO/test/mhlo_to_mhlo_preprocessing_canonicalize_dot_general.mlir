@@ -77,7 +77,7 @@ func.func @changing_to_validate_stuff(%arg0: tensor<1x8x64x32xf32>, %arg1: tenso
   } : (tensor<1x8x64x32xf32>, tensor<1x8x64x32xf32>) -> tensor<1x8x32x32xf32>
   return %0 : tensor<1x8x32x32xf32>
 }
-// CHECK: dot_general_to_dot_general_rank_reduced_a_transposed(%[[ARG0:.+]]: tensor<1x8x64x32xf32>, %[[ARG1:.+]]: tensor<1x8x64x32xf32>) -> tensor<1x8x32x32xf32>
+// CHECK: changing_to_validate_stuff(%[[ARG0:.+]]: tensor<1x8x64x32xf32>, %[[ARG1:.+]]: tensor<1x8x64x32xf32>) -> tensor<1x8x32x32xf32>
 // CHECK: %[[ARG0_RESHAPED_TR:.+]] = "mhlo.transpose"(%[[ARG0]]) {permutation = dense<[0, 1, 3, 2]> : tensor<4xi64>} : (tensor<1x8x64x32xf32>) -> tensor<1x8x32x64xf32>
 // CHECK: %[[ARG0_RESHAPED:.+]] = mhlo.reshape %[[ARG0_RESHAPED_TR]] : (tensor<1x8x32x64xf32>) -> tensor<8x32x64xf32>
 // CHECK: %[[ARG1_RSSHAPED:.+]] = mhlo.reshape %[[ARG1]] : (tensor<1x8x64x32xf32>) -> tensor<8x64x32xf32>
