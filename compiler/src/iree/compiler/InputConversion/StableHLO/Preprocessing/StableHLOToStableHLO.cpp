@@ -1347,6 +1347,15 @@ struct RngBitcastFloat final
   }
 };
 
+struct ZeroConcat final : OpRewritePattern<mlir::stablehlo::ConcatenateOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(mlir::stablehlo::ConcatenateOp op,
+                                PatternRewriter &rewriter) const override {
+    return failure();
+  }
+};
+
 // Similar to DotIsMul, this finds the case where a dot general
 // can be represented using a mul operation. This includes possibly making
 // an implicit cast explicit prior the mul.
@@ -1799,6 +1808,7 @@ struct StableHLOToStableHLOPreprocessing final
 
     // Unary elementwise op.
     patterns.insert<
+        ZeroConcat,
         ReorderBroadcastInDimOpAndElementwiseOp<mlir::stablehlo::AbsOp>,
         ReorderBroadcastInDimOpAndElementwiseOp<mlir::stablehlo::CeilOp>,
         ReorderBroadcastInDimOpAndElementwiseOp<mlir::stablehlo::ConvertOp>,

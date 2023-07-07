@@ -462,3 +462,11 @@ func.func @broadcast_iota_sort_slice_incorrect_dims(%in : tensor<16x16x16xf32>) 
 
 // CHECK-LABEL: @broadcast_iota_sort_slice_incorrect_dims
 // CHECK-NOT: chlo.top_k
+
+
+// CHECK-LABEL: @concat_remove_zero_extents
+func.func @concat_remove_zero_extents(%arg0: tensor<2x3xi32>, %arg1 : tensor<2x3xi32>, %arg2 : tensor<2x0xi32>) -> tensor<2x6xi32> {
+  %0 = stablehlo.concatenate %arg0, %arg1, %arg2, dim = 1 : (tensor<2x3xi32>, tensor<2x3xi32>, tensor<2x0xi32>) -> tensor<2x6xi32>
+  // CHECK-NOT: stablehlo.concatenate %arg0, %arg1, %arg2
+  return %0 : tensor<2x6xi32>
+}
