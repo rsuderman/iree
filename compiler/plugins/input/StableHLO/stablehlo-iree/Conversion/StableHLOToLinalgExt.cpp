@@ -245,20 +245,17 @@ struct ScatterOpConversion final
   LogicalResult
   matchAndRewrite(mlir::stablehlo::ScatterOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    ImplicitLocOpBuilder b(op.getLoc(), rewriter);
     if (!hasCanonicalDimensionNumbers(op))
       return failure();
-    if (llvm::size(op.getInputs()) != 1)
-      return op.emitError("NYI variadic operands scatter");
-    if (llvm::size(op.getUpdates()) != 1)
-      return op.emitError("NYI variadic updates scatter");
 
-    ImplicitLocOpBuilder b(op.getLoc(), rewriter);
-
-    Value original = adaptor.getInputs().front();
+    auto inputs = adaptor.getInputs();
     Value indices = adaptor.getScatterIndices();
-    Value updates = adaptor.getUpdates().front();
 
-    auto originalType = llvm::dyn_cast<ShapedType>(original.getType());
+    llvm::SmallVector<Type> inputTys;
+    for (auto input : inputs) {
+      inputTys.push_back(input.getType());
+    }
 
     llvm::SmallVector<int64_t> scatterDimMap;
     for (auto dim :
@@ -266,21 +263,31 @@ struct ScatterOpConversion final
       scatterDimMap.push_back(dim);
     }
 
+    llvm::SmallVector<Value> updates(adaptor.getUpdates());
+    updates.push_back(indices);
+
     auto scatterOp = rewriter.create<IREE::LinalgExt::ScatterOp>(
-        op.getLoc(), originalType, ValueRange{updates, indices},
-        ValueRange{original}, scatterDimMap, op.getUniqueIndices());
+        op.getLoc(), TypeRange{inputTys}, ValueRange{updates},
+        ValueRange{inputs}, scatterDimMap, op.getUniqueIndices());
 
     rewriter.inlineRegionBefore(op.getUpdateComputation(),
                                 scatterOp.getRegion(),
                                 scatterOp.getRegion().begin());
     Region &region = scatterOp.getRegion();
     TypeConverter::SignatureConversion signatureConverter(2);
-    Type argType = getElementTypeOrSelf(original.getType());
     // stablehlo.scatter op takes:
     //   output[O] = update_computation(output[O], updates[U])
     // where output[O] maps to block args #1 in linalg_ext.scatter ops.
-    signatureConverter.addInputs(1, argType);
-    signatureConverter.addInputs(0, argType);
+    for (int i = 0; i < inputs.size(); ++i) {
+      Type argType = getElementTypeOrSelf(inputs[i].getType());
+      signatureConverter.addInputs(i + inputs.size(), argType);
+    }
+
+    for (int i = 0; i < inputs.size(); ++i) {
+      Type argType = getElementTypeOrSelf(inputs[i].getType());
+      signatureConverter.addInputs(i, argType);
+    }
+
     rewriter.applySignatureConversion(&region, signatureConverter);
 
     rewriter.replaceOp(op, scatterOp->getResults());

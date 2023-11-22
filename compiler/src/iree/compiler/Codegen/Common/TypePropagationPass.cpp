@@ -334,22 +334,29 @@ struct IREELinalgExtScatterTypePropagation
   matchAndRewrite(IREE::LinalgExt::ScatterOp scatterOp, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const final {
     auto opOperands = scatterOp->getOpOperands();
-    Type inputType = opOperands[0].get().getType();
-    Type legalizedInputType = this->getTypeConverter()->convertType(inputType);
+    bool needsConversion = false;
+    for (auto& operand : opOperands) {
+      Type inputType = operand.get().getType();
+      Type legalizedInputType = this->getTypeConverter()->convertType(inputType);
+      needsConversion |= inputType != legalizedInputType;
+    }
 
-    if (inputType == legalizedInputType) {
+    if (!needsConversion) {
       return scatterOp.emitOpError(
           "unexpected all types legal within conversion pattern");
     }
 
-    Type resultType = opOperands[2].get().getType();
-    Type legalizedResultType =
-        this->getTypeConverter()->convertType(resultType);
+    llvm::SmallVector<Type> legalizedResultTypes;
+    for (auto resultType : scatterOp.getResultTypes()) {
+      Type legalizedResultType =
+          this->getTypeConverter()->convertType(resultType);
+      legalizedResultTypes.push_back(legalizedResultType);
+    }
 
     // Create a clone of the operation without cloning its regions.
     auto modifiedOp =
         cast<IREE::LinalgExt::ScatterOp>(mlir::cloneWithoutRegions(
-            rewriter, scatterOp, {legalizedResultType}, adaptor.getOperands()));
+            rewriter, scatterOp, legalizedResultTypes, adaptor.getOperands()));
 
     // Inline the region from the original operation into the new operation.
     rewriter.inlineRegionBefore(scatterOp->getRegions().front(),
@@ -361,13 +368,17 @@ struct IREELinalgExtScatterTypePropagation
     // type.
     TypeConverter::SignatureConversion signatureConverter(
         modifiedOpRegion.getNumArguments());
-    Type argType = modifiedOpRegion.getArguments()[0].getType();
-    std::optional<Type> legalizedArgType = legalizeStorageElementType(argType);
-    if (!legalizedArgType) {
-      return scatterOp.emitOpError("failed to get legalized type for argument");
+
+    llvm::SmallVector<Type> originalArgTypes;
+    for (auto it : llvm::enumerate(modifiedOpRegion.getArguments())) {
+      Type argType = it.value().getType();
+      std::optional<Type> legalizedArgType = legalizeStorageElementType(argType);
+      if (!legalizedArgType) {
+        return scatterOp.emitOpError("failed to get legalized type for argument");
+      }
+      signatureConverter.addInputs(it.index(), legalizedArgType.value());
+      originalArgTypes.push_back(argType);
     }
-    signatureConverter.addInputs(0, legalizedArgType.value());
-    signatureConverter.addInputs(1, legalizedArgType.value());
     rewriter.applySignatureConversion(&modifiedOpRegion, signatureConverter);
 
     {
@@ -375,35 +386,40 @@ struct IREELinalgExtScatterTypePropagation
       // scalar type.
       OpBuilder::InsertionGuard g(rewriter);
       Block *entryBlock = &modifiedOp->getRegion(0).getBlocks().front();
-      BlockArgument inputArg = entryBlock->getArgument(0);
-      BlockArgument outputArg = entryBlock->getArgument(1);
 
-      auto destType = getElementTypeOrSelf(inputType);
       rewriter.setInsertionPointToStart(entryBlock);
-
-      Value replacementInput =
-          convertElementType(rewriter, inputArg.getLoc(), destType, inputArg);
-      rewriter.replaceUsesOfBlockArgument(entryBlock->getArgument(0),
-                                          replacementInput);
-      Value replacementOutput =
-          convertElementType(rewriter, outputArg.getLoc(), destType, outputArg);
-      rewriter.replaceUsesOfBlockArgument(entryBlock->getArgument(1),
-                                          replacementOutput);
+      for (int i = 0; i < entryBlock->getNumArguments(); ++i) {
+        auto blockArg = entryBlock->getArgument(i);
+        auto destType = originalArgTypes[i];
+        Value replacementInput =
+            convertElementType(rewriter, blockArg.getLoc(), destType, blockArg);
+        if (replacementInput != blockArg) {
+          rewriter.replaceUsesOfBlockArgument(blockArg, replacementInput);
+        }
+      };
 
       // If the output is of an illegal type, the yield value needs to be
       // modified
       auto yieldOp = entryBlock->getTerminator();
 
       rewriter.setInsertionPoint(yieldOp);
-      OpOperand *modifiedOpOperand = &yieldOp->getOpOperand(0);
 
-      auto yieldOperand = convertElementType(rewriter, yieldOp->getLoc(),
-                                             legalizedArgType.value(),
-                                             modifiedOpOperand->get());
+      llvm::SmallVector<Value> yieldOperands;
+      for (auto operand : yieldOp->getOperands()) {
+        Type argType = operand.getType();
+        std::optional<Type> legalizedArgType = legalizeStorageElementType(argType);
+
+        auto yieldOperand = convertElementType(rewriter, yieldOp->getLoc(),
+                                               legalizedArgType.value(),
+                                               operand);
+        yieldOperands.push_back(yieldOperand);
+      }
 
       rewriter.replaceOpWithNewOp<IREE::LinalgExt::YieldOp>(yieldOp,
-                                                            yieldOperand);
+                                                            yieldOperands);
     }
+
+    rewriter.setInsertionPoint(scatterOp);
     rewriter.replaceOp(scatterOp, modifiedOp->getResults());
     return success();
   }

@@ -123,14 +123,44 @@ static bool isSmallerThan(ArrayRef<int64_t> sourceShape,
 // ScatterOp
 //===----------------------------------------------------------------------===//
 
+static bool SameShape(ShapedType ty0, ShapedType ty1) {
+  if (ty0.getRank() != ty1.getRank()) {
+    return false;
+  }
+
+  for (int i = 0; i < ty0.getRank(); ++i) {
+    if (ty1.getDimSize(i) != ty0.getDimSize(i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 LogicalResult ScatterOp::verify() {
   Operation *op = getOperation();
-  if (getInputs().size() != 2) {
-    return op->emitOpError("expected two input operands");
+  if (getInputs().size() < 2) {
+    return op->emitOpError("expected atleast two input operands");
   }
-  if (getOutputs().size() != 1) {
-    return op->emitOpError("expected one output operand");
+  if (getOutputs().empty()) {
+    return op->emitOpError("expected atleast one output operand");
   }
+
+  auto input0Ty = cast<ShapedType>(getInputs().front().getType());
+  for (auto input : getInputs().drop_back()) {
+    auto inputTy = cast<ShapedType>(input.getType());
+    if (!SameShape(input0Ty, inputTy)) {
+      return op->emitOpError("expected input shapes to match");
+    }
+  }
+
+  auto output0Ty = cast<ShapedType>(getOutputs().front().getType());
+  for (auto output : getOutputs()) {
+    auto outputTy = cast<ShapedType>(output.getType());
+    if (!SameShape(output0Ty, outputTy)) {
+      return op->emitOpError("expected output shapes to match");
+    }
+  }
+
   auto checkDimensionsMatch = [&](ShapedType t1, ShapedType t2, unsigned dim) {
     return t1.getShape()[dim] == t2.getShape()[dim];
   };
@@ -151,28 +181,28 @@ LogicalResult ScatterOp::verify() {
     return op->emitOpError("invalid number of dimension map entries ");
   }
 
-  auto originalType = getOriginalType();
+  auto originalType = getOriginalType(0);
   if (isInvalid(dimMap, originalType.getRank()))
     return op->emitOpError("dimension map is invalid");
 
   // The first dimension of the indices should match the first dimension of the
   // output. They indicate to the number of updates.
-  auto updateType = getUpdateType();
-  if (updateType.getRank() < 1) {
+  auto update0Type = getUpdateType(0);
+  if (update0Type.getRank() < 1) {
     return op->emitOpError("expected update value to be at least rank 1");
   }
-  if (!checkDimensionsMatch(indicesType, updateType, 0)) {
+  if (!checkDimensionsMatch(indicesType, update0Type, 0)) {
     return op->emitOpError(
         "mismatch in shape of indices and update value at dim#0");
   }
-  if (updateType.getRank() - 1 > originalType.getRank()) {
+  if (update0Type.getRank() - 1 > originalType.getRank()) {
     return op->emitOpError(
         "update value rank exceeds the rank of the original value");
   }
 
   // indexDepth + update dims should cover the original dims. The first dim of
   // update is the number of updates.
-  if (originalType.getRank() > indexDepth + updateType.getRank() - 1) {
+  if (originalType.getRank() > indexDepth + update0Type.getRank() - 1) {
     return op->emitOpError(
         "index depth and update value does not cover rank of original value");
   }
@@ -182,12 +212,12 @@ LogicalResult ScatterOp::verify() {
   int64_t fullSliceDims = originalType.getRank() - indexDepth;
   for (auto it :
        llvm::zip(llvm::seq<unsigned>(indexDepth, originalType.getRank()),
-                 llvm::seq<unsigned>(updateType.getRank() - fullSliceDims,
-                                     updateType.getRank()))) {
+                 llvm::seq<unsigned>(update0Type.getRank() - fullSliceDims,
+                                     update0Type.getRank()))) {
     int64_t originalDim = std::get<0>(it);
     int64_t updateDim = std::get<1>(it);
     if (!originalType.isDynamicDim(originalDim) &&
-        updateType.getDimSize(updateDim) >
+        update0Type.getDimSize(updateDim) >
             originalType.getDimSize(originalDim)) {
       return op->emitOpError("shape of update value dim#")
              << updateDim << " exceeds original value at dim#" << originalDim;
@@ -195,62 +225,79 @@ LogicalResult ScatterOp::verify() {
   }
 
   // Check that the remaining update indices do not exceed the update length.
-  int64_t insertDims = originalType.getRank() - updateType.getRank() + 1;
+  int64_t insertDims = originalType.getRank() - update0Type.getRank() + 1;
   for (auto it : llvm::zip(
            llvm::seq<unsigned>(insertDims, indexDepth),
-           llvm::seq<unsigned>(1, updateType.getRank() - fullSliceDims))) {
+           llvm::seq<unsigned>(1, update0Type.getRank() - fullSliceDims))) {
     int64_t originalDim = std::get<0>(it);
     int64_t updateDim = std::get<1>(it);
     if (!originalType.isDynamicDim(originalDim) &&
-        updateType.getDimSize(updateDim) >
+        update0Type.getDimSize(updateDim) >
             originalType.getDimSize(originalDim)) {
       return op->emitOpError("indexed shape of update value dim#")
              << updateDim << " exceeds original value at dim#" << originalDim
-             << " " << updateType.getDimSize(updateDim) << " "
+             << " " << update0Type.getDimSize(updateDim) << " "
              << originalType.getDimSize(originalDim);
     }
   }
 
   Region &region = this->getRegion();
   Block *body = &region.front();
-  if (body->getNumArguments() != 2) {
+  if (body->getNumArguments() != (getNumOriginals() + getNumUpdates())) {
     return op->emitOpError("expected region to have two arguments");
   }
-  Type arg0Type = body->getArgument(0).getType();
-  Type arg1Type = body->getArgument(1).getType();
-  if (!getComplexElementTypeOrSelf(arg0Type).isIntOrFloat() ||
-      !getComplexElementTypeOrSelf(arg1Type).isIntOrFloat()) {
-    return op->emitOpError(
-        "expected region to have scalar argument of integer or float types");
+
+  for (auto it : llvm::enumerate(updates())) {
+    auto argType = body->getArgument(it.index()).getType();
+    auto updateType = getElementTypeOrSelf(it.value().getType());
+    if (!getComplexElementTypeOrSelf(argType).isIntOrFloat()) {
+      return op->emitOpError(
+          "expected region to have scalar argument of integer or float types");
+    }
+    if (argType != updateType) {
+      return op->emitOpError("mismatch in argument ")
+             << it.index() << " of region "
+             << argType << " and element type of update value "
+             << updateType;
+    }
   }
-  if (arg0Type != updateType.getElementType()) {
-    return op->emitOpError("mismatch in argument 0 of region ")
-           << arg0Type << " and element type of update value "
-           << updateType.getElementType();
+
+  const int64_t numUpdates = getNumUpdates();
+  for (auto it : llvm::enumerate(originals())) {
+    auto argType = body->getArgument(it.index() + numUpdates).getType();
+    auto updateType = getElementTypeOrSelf(it.value().getType());
+    if (!getComplexElementTypeOrSelf(argType).isIntOrFloat()) {
+      return op->emitOpError(
+          "expected region to have scalar argument of integer or float types");
+    }
+    if (argType != updateType) {
+      return op->emitOpError("mismatch in argument ")
+             << it.index() << " of region "
+             << argType << " and element type of update value "
+             << updateType;
+    }
   }
-  if (arg1Type != originalType.getElementType()) {
-    return op->emitOpError("mismatch in argument 1 of region ")
-           << arg1Type << " and element type of original value "
-           << originalType.getElementType();
-  }
-  if (arg0Type != arg1Type) {
-    return op->emitOpError("mismatch in region argument types ")
-           << arg0Type << " and " << arg1Type;
-  }
+
   auto yieldOp = cast<IREE::LinalgExt::YieldOp>(body->getTerminator());
-  if (yieldOp->getNumOperands() != 1) {
-    return yieldOp.emitOpError("expected region to yield a single value");
+  if (yieldOp->getNumOperands() != getNumDpsInits()) {
+    return yieldOp.emitOpError("expected region to match the number of inits");
   }
-  auto yieldedType = yieldOp->getOperand(0).getType();
-  if (yieldedType != arg0Type) {
-    return yieldOp.emitOpError("mismatch in type of yielded value ")
-           << yieldedType << " and argument of the region " << arg0Type;
+
+  for (auto it : llvm::enumerate(yieldOp.getOperands())) {
+    auto yielded = it.value();
+    auto yieldedType = yielded.getType();
+    auto argType = body->getArgument(it.index()).getType();
+    if (yieldedType != argType) {
+      return yieldOp.emitOpError("mismatch in type of yielded value ")
+             << yieldedType << " and argument of the region " << argType;
+    }
   }
+
   return success();
 }
 
 SmallVector<utils::IteratorType> ScatterOp::getLoopIteratorTypes() {
-  SmallVector<utils::IteratorType> iteratorTypes(getUpdateType().getRank(),
+  SmallVector<utils::IteratorType> iteratorTypes(getUpdateType(0).getRank(),
                                                  utils::IteratorType::parallel);
   if (!getUniqueIndices()) {
     iteratorTypes[0] = utils::IteratorType::reduction;
@@ -263,8 +310,8 @@ SmallVector<Range> ScatterOp::getIterationDomain(OpBuilder &builder) {
   Value zero = builder.create<arith::ConstantIndexOp>(loc, 0);
   Value one = builder.create<arith::ConstantIndexOp>(loc, 1);
   SmallVector<Range> ranges;
-  for (auto dim : llvm::seq<int64_t>(0, getUpdateType().getRank())) {
-    Value ub = getDimValue(builder, loc, updates(), dim);
+  for (auto dim : llvm::seq<int64_t>(0, getUpdateType(0).getRank())) {
+    Value ub = getDimValue(builder, loc, update(0), dim);
     ranges.emplace_back(Range{zero, ub, one});
   }
   return ranges;
@@ -280,11 +327,16 @@ ScatterOp::getTiledImplementation(OpBuilder &builder,
   auto oneAttr = builder.getI64IntegerAttr(1);
 
   // Slice of the updates.
-  auto updateRank = getUpdateType().getRank();
+  auto updateRank = getUpdateType(0).getRank();
   SmallVector<OpFoldResult> updateStrides(updateRank, oneAttr);
-  Value tiledUpdate =
-      getSlice(builder, loc, updates(), offsets, sizes, updateStrides);
-  assert(tiledUpdate && "failed to get slice of update");
+  // TODO: Include multiple slicing
+  llvm::SmallVector<Value> tiledUpdates;
+  for (auto update : updates()) {
+    Value tiledUpdate =
+        getSlice(builder, loc, update, offsets, sizes, updateStrides);
+    assert(tiledUpdate && "failed to get slice of update");
+    tiledUpdates.push_back(tiledUpdate);
+  }
 
   // Slice of indices.
   auto indicesRank = getIndicesType().getRank();
@@ -306,19 +358,29 @@ ScatterOp::getTiledImplementation(OpBuilder &builder,
                                    originalSizes))) {
     return {};
   }
-  auto originalRank = getOriginalType().getRank();
+  auto originalRank = getOriginalType(0).getRank();
   SmallVector<OpFoldResult> originalStrides(originalRank, oneAttr);
-  Value tiledOriginal = getSlice(builder, loc, original(), originalOffsets,
-                                 originalSizes, originalStrides);
-  assert(tiledOriginal && "failed to get slice of original tensor");
+  llvm::SmallVector<Value> tiledOriginals;
+  for (auto original : originals()) {
+    // TODO: include tiling multiple originals
+    Value tiledOriginal = getSlice(builder, loc, original, originalOffsets,
+                                   originalSizes, originalStrides);
+    assert(tiledOriginal && "failed to get slice of original tensor");
+    tiledOriginals.push_back(tiledOriginal);
+  }
 
   SmallVector<Type> resultTypes;
-  if (getNumResults()) {
+  for (auto tiledOriginal : tiledOriginals) {
     resultTypes.push_back(tiledOriginal.getType());
   }
+
+  llvm::SmallVector<Value> tiledOperands(tiledUpdates);
+  tiledOperands.push_back(tiledIndices);
+  tiledOperands.append(tiledOriginals);
+
   Operation *tiledScatterOp =
-      mlir::clone(builder, getOperation(), resultTypes,
-                  ValueRange{tiledUpdate, tiledIndices, tiledOriginal});
+      mlir::clone(builder, getOperation(), resultTypes, tiledOperands);
+
   return TilingResult{{tiledScatterOp},
                       SmallVector<Value>(tiledScatterOp->getResults())};
 }
@@ -329,14 +391,14 @@ LogicalResult ScatterOp::getResultTilePosition(
     SmallVector<OpFoldResult> &resultSizes) {
   auto zeroAttr = builder.getI64IntegerAttr(0);
   // Slice of the original.
-  auto originalRank = getOriginalType().getRank();
+  auto originalRank = getOriginalType(0).getRank();
   resultOffsets.resize(originalRank, zeroAttr);
   resultSizes.resize(originalRank);
 
-  auto updateRank = getUpdateType().getRank();
+  auto updateRank = getUpdateType(0).getRank();
   Location loc = getLoc();
   for (auto dim : llvm::seq<int64_t>(0, originalRank - updateRank + 1)) {
-    resultSizes[dim] = getDim(builder, loc, original(), dim);
+    resultSizes[dim] = getDim(builder, loc, original(0), dim);
   }
   for (auto dim :
        llvm::seq<int64_t>(originalRank - updateRank + 1, originalRank)) {
@@ -350,14 +412,20 @@ LogicalResult ScatterOp::generateScalarImplementation(OpBuilder &b,
                                                       Location loc,
                                                       ValueRange ivs) {
   auto indexDepth = getIndexDepth();
-  Value update = b.create<memref::LoadOp>(loc, updates(), ivs);
+  // TODO: make work with multiple values
+  llvm::SmallVector<Value> updateLoads;
+  for (auto update : updates()) {
+    Value updateLoad = b.create<memref::LoadOp>(loc, update, ivs);
+    updateLoads.push_back(updateLoad);
+  }
+
   SmallVector<Value> starts;
   SmallVector<Value> loadIndices;
   loadIndices.push_back(ivs.front());
   loadIndices.push_back(Value());
 
   // Populate with empty values.
-  auto originalTy = original().getType().cast<ShapedType>();
+  auto originalTy = original(0).getType().cast<ShapedType>();
   starts.resize(originalTy.getRank(), Value());
   auto updateIvs = ivs.drop_front(1);
 
@@ -380,20 +448,28 @@ LogicalResult ScatterOp::generateScalarImplementation(OpBuilder &b,
     starts[dim] = ret;
   }
 
-  Value init = b.create<memref::LoadOp>(loc, original(), starts);
+  // TODO(suderman): Make work with multiple originals:
+  llvm::SmallVector<Value> inits;
+  for (auto original : originals()) {
+    Value init = b.create<memref::LoadOp>(loc, original, starts);
+    inits.push_back(init);
+  }
 
   IRMapping bvm;
   Block &block = getRegion().front();
-  bvm.map(block.getArgument(0), update);
-  bvm.map(block.getArgument(1), init);
+  // bvm.map(block.getArgument(0), updateLoad);
+  // bvm.map(block.getArgument(1), init);
   for (auto &blockOp : block.without_terminator()) {
     b.clone(blockOp, bvm);
   }
   // The last op is linalg_ext.yield op. Store the operand to
   // destination.
-  b.create<memref::StoreOp>(
-      loc, bvm.lookupOrDefault(block.getTerminator()->getOperand(0)),
-      original(), starts);
+  for (auto& operand : block.getTerminator()->getOpOperands()) {
+    operand.getOperandNumber();
+    b.create<memref::StoreOp>(
+        loc, bvm.lookupOrDefault(operand.get()),
+        original(operand.getOperandNumber()), starts).dump();
+  }
   return success();
 }
 

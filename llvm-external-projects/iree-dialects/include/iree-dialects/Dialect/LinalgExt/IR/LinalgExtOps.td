@@ -158,7 +158,7 @@ def IREELinalgExt_ScatterOp : IREELinalgExt_Op<"scatter",
   let extraClassDeclaration = extraLinalgExtOpClassDeclaration # [{
 
     int64_t getIndexDepth() {
-      return getDpsInputOperand(1)
+      return getDpsInputOperands().back()
           ->get()
           .getType()
           .cast<ShapedType>()
@@ -166,32 +166,50 @@ def IREELinalgExt_ScatterOp : IREELinalgExt_Op<"scatter",
           .back();
     }
 
-    Value updates() {
-      return getDpsInputOperand(0)->get();
+    int64_t getNumUpdates() {
+      return getNumDpsInputs() - 1;
     }
 
-    ShapedType getUpdateType() {
-      return updates().getType().cast<ShapedType>();
+    llvm::SmallVector<Value> updates() {
+      llvm::SmallVector<Value> updates = getDpsInputs();
+      updates.pop_back();
+      return updates;
+    }
+
+    Value update(int64_t i) {
+      return getDpsInputOperand(i)->get();
+    }
+
+    ShapedType getUpdateType(int64_t i) {
+      return cast<ShapedType>(getDpsInputOperand(i)->get().getType());
     }
 
     Value indices() {
-      return getDpsInputOperand(1)->get();
+      return getDpsInputOperands().back()->get();
     }
 
     ShapedType getIndicesType() {
       return indices().getType().cast<ShapedType>();
     }
 
-    Value original() {
-      return getDpsInitOperand(0)->get();
+    Value original(int64_t i) {
+      return getDpsInitOperand(i)->get();
     }
 
-    ShapedType getOriginalType() {
-      return original().getType().cast<ShapedType>();
+    llvm::SmallVector<Value> originals() {
+      return getDpsInits();
+    }
+
+    int64_t getNumOriginals() {
+      return getNumDpsInits();
+    }
+
+    ShapedType getOriginalType(int64_t i) {
+      return original(i).getType().cast<ShapedType>();
     }
 
     int64_t getUpdateSliceRank() {
-      return updates().getType().cast<ShapedType>().getRank() - 1;
+      return update(0).getType().cast<ShapedType>().getRank() - 1;
     }
 
     bool isScalarUpdate() {
