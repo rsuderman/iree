@@ -1341,19 +1341,10 @@ LogicalResult AttentionOp::verify() {
   }
 
   if (queryElementType != keyElementType ||
-      queryElementType != valueElementType ||
-      queryElementType != scaleElementType) {
+      queryElementType != valueElementType) {
     return op->emitOpError(
-        "element types of (Q)uery, (K)ey and (V)alue and scale should be "
+        "element types of (Q)uery, (K)ey and (V)alue should be "
         "same");
-  }
-  if (!isTiled) {
-    // Vanilla attention.
-    if (queryElementType != outputElementType) {
-      return op->emitOpError("expected element type for Output ")
-             << queryElementType << "but found " << outputElementType
-             << " instead";
-    }
   }
   if (isTiled) {
     // Tiled/Flash attention.
