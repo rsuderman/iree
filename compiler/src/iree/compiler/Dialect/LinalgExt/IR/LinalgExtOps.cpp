@@ -1292,11 +1292,9 @@ LogicalResult AttentionOp::verify() {
 
   ShapedType queryType = getQueryType();
   ShapedType keyType = getKeyType();
-  ShapedType valueType = getValueType();
   ShapedType outputType = getOutputType();
   Type queryElementType = queryType.getElementType();
   Type keyElementType = keyType.getElementType();
-  Type valueElementType = valueType.getElementType();
   Type outputElementType = outputType.getElementType();
 
   FloatType scaleElementType = dyn_cast<FloatType>(getScale().getType());
@@ -1340,11 +1338,9 @@ LogicalResult AttentionOp::verify() {
     return failure();
   }
 
-  if (queryElementType != keyElementType ||
-      queryElementType != valueElementType) {
+  if (queryElementType != keyElementType) {
     return op->emitOpError(
-        "element types of (Q)uery, (K)ey and (V)alue should be "
-        "same");
+        "element types of (Q)uery and (K)ey should be same");
   }
   if (isTiled) {
     // Tiled/Flash attention.
