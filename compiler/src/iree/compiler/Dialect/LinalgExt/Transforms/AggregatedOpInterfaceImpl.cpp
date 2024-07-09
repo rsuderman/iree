@@ -361,9 +361,12 @@ OnlineAttentionOp::decomposeOperation(OpBuilder &b) {
   auto pETy = getElementTypeOrSelf(p.getType());
   if (pETy != vETy && isa<FloatType>(vETy)) {
     if (vETy.getIntOrFloatBitWidth() <= 8) {
-      Value abs = b.create<tensor::EmptyOp>(loc, sSizes, elementType);
+      // Value abs = b.create<tensor::EmptyOp>(loc, sSizes, elementType);
       // We rescale `p` to use the full range and pass back the `pScale`.
-      Value absMax = reduceAbsMax(b, loc, pMap, p, abs);
+      // Value absMax = reduceAbsMax(b, loc, pMap, p, abs);
+      Value absMax = b.create<arith::ConstantOp>(
+          loc, b.getFloatAttr(pETy, 1.0));
+ 
       auto fpTy = cast<FloatType>(vETy);
       double largestDbl =
           APFloat::getLargest(fpTy.getFloatSemantics(), /*Negative=*/false)
