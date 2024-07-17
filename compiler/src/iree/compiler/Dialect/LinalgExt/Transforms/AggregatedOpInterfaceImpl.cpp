@@ -345,15 +345,18 @@ OnlineAttentionOp::decomposeOperation(OpBuilder &b) {
             return sizes[cast<AffineDimExpr>(dimExpr).getPosition()];
           }));
 
-      // We rescale `p` to use the full range and pass back the `pScale`.
-      Value maxEmpty = b.create<tensor::EmptyOp>(loc, mSizes, reduceType);
-      Value absMax =
-          reduce<arith::MaximumFOp>(b, loc, pMap, maxMap, p, maxEmpty);
-
       auto fpTy = cast<FloatType>(vETy);
       double largestDbl =
           APFloat::getLargest(fpTy.getFloatSemantics(), /*Negative=*/false)
               .convertToDouble();
+
+      // We rescale `p` to use the full range and pass back the `pScale`.
+      Value maxEmpty = b.create<tensor::EmptyOp>(loc, SmallVector<int64_t>{}, reduceType);
+      Value largestInv = b.create<arith::ConstantOp>(
+          loc, b.getFloatAttr(elementType, 1.0 / largestDbl));
+      Value absMax = b.create<linalg::FillOp>(loc, largestInv, maxEmpty).getResult(0);
+          // reduce<arith::MaximumFOp>(b, loc, pMap, maxMap, p, maxEmpty);
+
 
       AffineMap scaleMap = AffineMap::get(/*dimCount=*/maxMap.getNumInputs(),
                                           /*symbolCount=*/0, getContext());
@@ -361,20 +364,17 @@ OnlineAttentionOp::decomposeOperation(OpBuilder &b) {
       // We normalize p from [0, max] to [0, fp8.max] to guarantee we
       // use the full `fp8` range, then renormlize post Softmax@V matmul
       // to correct.
-      Value largestInv = b.create<arith::ConstantOp>(
-          loc, b.getFloatAttr(elementType, 1.0 / largestDbl));
-      pScale = scaleValueInPlace(b, loc, maxMap, scaleMap, absMax, largestInv);
+      pScale = absMax;
 
       // Compute the pre matmul scale to handle fp8 quantization:
-      Value recInit = b.create<tensor::EmptyOp>(loc, mSizes, elementType);
+      Value recInit = b.create<tensor::EmptyOp>(loc, SmallVector<int64_t>{}, elementType);
       Value largest = b.create<arith::ConstantOp>(
           loc, b.getFloatAttr(elementType, largestDbl));
       Value pScaleInv = reciprocalValue(b, loc, absMax, recInit);
-      pScaleInv =
-          scaleValueInPlace(b, loc, maxMap, scaleMap, pScaleInv, largest);
+      pScaleInv = scaleValueInPlace(b, loc, scaleMap, scaleMap, pScaleInv, largest);
 
-      p = scaleValueInPlace(b, loc, pMap, maxMap, p, pScaleInv);
-      norm = scaleValueInPlace(b, loc, normMap, maxMap, norm, pScaleInv);
+      p = scaleValueInPlace(b, loc, pMap, scaleMap, p, pScaleInv);
+      norm = scaleValueInPlace(b, loc, normMap, scaleMap, norm, pScaleInv);
     }
 
     Value convertP = b.create<tensor::EmptyOp>(loc, sSizes, vETy);
@@ -390,7 +390,9 @@ OnlineAttentionOp::decomposeOperation(OpBuilder &b) {
 
   // Update for for the FP8 dynamic scale:
   if (pScale) {
-    newAcc = scaleValueInPlace(b, loc, accMap, maxMap, newAcc, pScale);
+    AffineMap scaleMap = AffineMap::get(/*dimCount=*/maxMap.getNumInputs(),
+                                        /*symbolCount=*/0, getContext());
+    newAcc = scaleValueInPlace(b, loc, accMap, scaleMap, newAcc, pScale);
   }
 
   return SmallVector<Value>{newAcc, newMax, newSum};
